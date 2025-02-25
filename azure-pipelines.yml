@@ -1,0 +1,122 @@
+trigger:
+- main
+
+resources:
+- repo: self
+
+variables:
+  tag: '$(Build.BuildId)'
+
+stages:
+- stage: AquaSCS
+  displayName: Aqua SupplyChain Security
+  jobs:
+  - job: Aqua
+    displayName: Aqua Code Scanner
+    container:
+      image: aquasec/aqua-scanner:latest-limited
+      options: -u 0
+      env:
+        AQUA_KEY: $(AQUA_KEY)
+        AQUA_SECRET: $(AQUA_SECRET)
+        AQUA_URL: $(AQUA_URL)
+        CSPM_URL: $(AQUA_CSPM_URL)
+        AZURE_TOKEN: $(AZURE_TOKEN)
+        TRIVY_RUN_AS_PLUGIN: aqua 
+    steps:
+    - checkout: self
+      fetchDepth: 0
+    - script: |
+        trivy fs --scanners misconfig,vuln,secret . --sast
+        # To customize which severities to scan for, add the following flag: --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+        # To enable SAST scanning, add: --sast
+        # To enable npm/dotnet non-lock file scanning, add: --package-json / --dotnet-proj
+  
+  - job: sbom
+    dependsOn:
+    - Aqua
+    condition: succeeded('Aqua')
+    displayName: Aqua SBOM
+    steps:
+      - task: CmdLine@2
+        displayName: Aqua SBOM
+        inputs: 
+          script: |-
+              export BILLY_SERVER=https://billy.asia-1.codesec.aquasec.com
+              curl -sLo install.sh download.codesec.aquasec.com/billy/install.sh
+              curl -sLo install.sh.checksum https://github.com/argonsecurity/releases/releases/latest/download/install.sh.checksum
+              if ! cat install.sh.checksum | sha256sum ; then
+                echo "install.sh checksum failed"
+                exit 1
+              fi
+              BINDIR="." sh install.sh
+              rm install.sh install.sh.checksum
+              ./billy generate \
+                --access-token $(System.AccessToken) \
+                --aqua-key $(AQUA_KEY) \
+                --aqua-secret $(AQUA_SECRET) \
+                --cspm-url https://asia-1.api.cloudsploit.com \
+                --artifact-path  $(Pipeline.Workspace)
+              
+                #The docker image name:tag of the newly built image
+                # --artifact-path  my-image-name:${versionEnv}        
+                #OR the path to the root folder of your project. I.e my-repo/my-app 
+                # --artifact-path  ${env.MY_APP_ROOT}
+
+- stage: Build
+  dependsOn:
+  - AquaSCS
+  condition: succeeded('AquaSCS')
+  displayName: Build, Scan, Push Image
+  jobs:
+  - job: Build
+    displayName: Build, Scan, Push Image
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+
+    - task: Maven@4
+      inputs:
+        mavenPomFile: 'pom.xml'
+        mavenOptions: '-Xmx3072m'
+        javaHomeOption: 'JDKVersion'
+        jdkVersionOption: 'default'
+        jdkArchitectureOption: 'x64'
+        publishJUnitResults: true
+        testResultsFiles: '**/TEST-*.xml'
+        goals: 'package'
+
+    - task: Docker@2
+      displayName: Build Image
+      inputs:
+        command: build
+        repository: $(ACR_REGISTRY)/poc-demo-java
+        tags: $(Build.BuildId)
+        dockerfile: '$(Build.SourcesDirectory)/Dockerfile'
+        buildContext: '$(Build.SourcesDirectory)'
+
+    - task: CmdLine@2
+      displayName: Pull Aqua Scanner Image
+      inputs: 
+        script: |-
+          docker image ls 
+          docker login registry.aquasec.com -u $(AQUA_USER) -p $(AQUA_PASSWORD)
+          docker pull registry.aquasec.com/scanner:2022.4
+
+    - task: aquasecScanner@4
+      displayName: Aqua Image Scanner
+      inputs:
+        image: $(ACR_REGISTRY)/poc-demo-java:$(Build.BuildId)
+        register: false
+        hideBase: false
+        showNegligible: false
+        scanner: 'registry.aquasec.com/scanner:2022.4'
+        connection: 'pos-devops'
+        runOptions: '-e BUILD_NUMBER=$(Build.BuildId) -e BUILD_JOB_NAME=$(Build.Repository.Name)'
+
+    - task: CmdLine@2
+      displayName: Push Image to ACR
+      inputs: 
+        script: |-
+            docker login -u $(ACR_USERNAME) -p $(ACR_PASSWORD) $(ACR_REGISTRY)
+            docker push $(ACR_REGISTRY)/poc-demo-java:$(Build.BuildId)
