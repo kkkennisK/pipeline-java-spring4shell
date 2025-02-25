@@ -90,7 +90,8 @@ stages:
       displayName: Build Image
       inputs:
         command: build
-        repository: $(ACR_REGISTRY)/poc-demo-java
+        repository: $(ACR_REGISTRY)/poc-demo-java-spring4shell
+
         tags: $(Build.BuildId)
         dockerfile: '$(Build.SourcesDirectory)/Dockerfile'
         buildContext: '$(Build.SourcesDirectory)'
@@ -106,7 +107,7 @@ stages:
     - task: aquasecScanner@4
       displayName: Aqua Image Scanner
       inputs:
-        image: $(ACR_REGISTRY)/poc-demo-java:$(Build.BuildId)
+        image: $(ACR_REGISTRY)/poc-demo-java-spring4shell:$(Build.BuildId)
         register: false
         hideBase: false
         showNegligible: false
@@ -119,4 +120,4 @@ stages:
       inputs: 
         script: |-
             docker login -u $(ACR_USERNAME) -p $(ACR_PASSWORD) $(ACR_REGISTRY)
-            docker push $(ACR_REGISTRY)/poc-demo-java:$(Build.BuildId)
+            docker push $(ACR_REGISTRY)/poc-demo-java-spring4shell:$(Build.BuildId)
