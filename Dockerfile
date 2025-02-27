@@ -1,7 +1,7 @@
 ##
 ## Build
 ##
-FROM maven:3.8.4-openjdk-11-slim AS build
+FROM docker.io/maven:3.8.4-openjdk-11-slim AS build
 
 WORKDIR /helloworld/
 
