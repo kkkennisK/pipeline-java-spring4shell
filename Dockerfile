@@ -14,7 +14,7 @@ RUN mvn clean package
 ##
 ## Run
 ## Pin our tomcat version to something that has not been updated to remove the vulnerability
-FROM tomcat:9.0.59-jre11-openjdk-slim
+FROM docker.io/tomcat:9.0.59-jre11-openjdk-slim
 
 #  Deploy to tomcat
 COPY --from=build /helloworld/target/helloworld.war /usr/local/tomcat/webapps/
